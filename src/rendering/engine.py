@@ -146,7 +146,10 @@ class RenderEngine:
                         s_w, s_h = 1280, 720
 
                     half_h = target_h // 2  # 960
-                    crop_w = min(s_w, int(round(s_h * (target_w / half_h))))  # 810 for 720p
+                    # Tightly isolated crop width (prevents neighbor bleeding)
+                    default_crop_w = min(int(round(s_w * 0.46)), int(round(s_h * (target_w / half_h))))
+                    crop_w = int(layout_config.get("crop_w", default_crop_w))
+                    crop_w = min(s_w, crop_w)
 
                     spk_a_x = layout_config.get("speaker_a_x", 0)
                     spk_b_x = layout_config.get("speaker_b_x", max(0, s_w - crop_w))

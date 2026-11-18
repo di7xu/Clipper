@@ -72,12 +72,14 @@ def build_split_filtergraph(
     speaker_b_x: int,
     out_width: int = 1080,
     out_height: int = 1920,
+    crop_width: Optional[int] = None,
     input_label: str = "0:v",
     output_label: str = "v_stacked"
 ) -> str:
-    """Construct an FFmpeg filtergraph stacking two cropped speakers into 9:16 vertical."""
+    """Construct an FFmpeg filtergraph stacking two cropped speakers into 9:16 vertical without neighbor bleed."""
     half_h = out_height // 2  # 960
-    crop_w = int(round(source_height * (out_width / half_h)))  # 810 for 720p, 1215 for 1080p
+    # Use tightly isolated crop width (<= 46% of width) if not provided
+    crop_w = crop_width if crop_width else min(int(round(source_width * 0.46)), int(round(source_height * (out_width / half_h))))
     crop_w = min(crop_w, source_width)
 
     x_a = max(0, min(source_width - crop_w, speaker_a_x))
@@ -98,9 +100,12 @@ def detect_podcast_speakers(
     duration: float,
     source_w: int,
     source_h: int
-) -> Tuple[bool, int, int]:
-    """Detect if the clip contains two distinct speakers (podcast/interview)
-    and return their optimal horizontal crop offsets (x_a, x_b).
+) -> Tuple[bool, int, int, int, str]:
+    """Analyze video frames to classify layout: Single Speaker (Full 9:16) vs Wide 2-Speaker (Stacked 9:16).
+    
+    Prevents:
+    1. Duplicating single-camera close-ups on top and bottom (switches to Full Screen 9:16).
+    2. Side neighbor bleeding in wide shots by enforcing strict mid-point isolation bounds.
     """
     try:
         import cv2
@@ -109,51 +114,73 @@ def detect_podcast_speakers(
         tracker = FaceTracker()
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            crop_w = min(source_w, int(round(source_h * 1.125)))
-            return False, 0, max(0, source_w - crop_w)
+            w_iso = min(source_w, int(round(source_h * 0.75)))
+            return False, 0, max(0, source_w - w_iso), w_iso, "single_speaker"
 
         left_xs: List[float] = []
         right_xs: List[float] = []
+        all_centroids: List[float] = []
+        dual_face_frame_count = 0
 
-        # Sample 6 frames evenly across the segment
-        sample_count = 6
-        step = max(0.5, duration / max(1, sample_count))
+        # Sample 10 frames evenly across the segment
+        sample_count = 10
+        step = max(0.4, duration / max(1, sample_count))
+        mid_x = source_w * 0.50
+
         for i in range(sample_count):
             t = start_time + (i * step)
             cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
             ret, frame = cap.read()
             if not ret:
                 continue
+
             faces = tracker.detect_faces(frame)
-            for f in faces:
-                if f.w > 35 and f.score >= 0.65:
-                    if f.centroid_x < source_w * 0.48:
-                        left_xs.append(f.centroid_x)
-                    elif f.centroid_x > source_w * 0.52:
-                        right_xs.append(f.centroid_x)
+            # Filter valid speaker faces
+            valid_faces = [f for f in faces if f.w > 35 and f.score >= 0.65]
+
+            # Count simultaneous faces in this exact frame
+            l_in_frame = [f for f in valid_faces if f.centroid_x < mid_x - 30]
+            r_in_frame = [f for f in valid_faces if f.centroid_x > mid_x + 30]
+
+            if l_in_frame and r_in_frame:
+                dual_face_frame_count += 1
+                for f in l_in_frame:
+                    left_xs.append(f.centroid_x)
+                for f in r_in_frame:
+                    right_xs.append(f.centroid_x)
+
+            for f in valid_faces:
+                all_centroids.append(f.centroid_x)
 
         cap.release()
 
-        half_h = 960
-        crop_w = min(source_w, int(round(source_h * (1080 / half_h))))
+        # Strict isolation crop width: strictly <= 46% of source width so left & right NEVER overlap
+        w_isolated = min(int(round(source_w * 0.46)), int(round(source_h * 0.85)))
 
-        # Two distinct clusters found -> podcast dialogue
-        if len(left_xs) >= 1 and len(right_xs) >= 1:
+        # CASE A: Multiple frames have 2 SIMULTANEOUS faces -> True 2-person wide angle shot!
+        if dual_face_frame_count >= 2 and len(left_xs) >= 2 and len(right_xs) >= 2:
             avg_left = sum(left_xs) / len(left_xs)
             avg_right = sum(right_xs) / len(right_xs)
-            x_a = max(0, min(source_w - crop_w, int(round(avg_left - crop_w / 2.0))))
-            x_b = max(0, min(source_w - crop_w, int(round(avg_right - crop_w / 2.0))))
-            return True, x_a, x_b
 
-        # Fallback default positions for podcast wide-shot (left half & right half)
-        default_xa = 0
-        default_xb = max(0, source_w - crop_w)
-        is_podcast = (len(left_xs) + len(right_xs)) >= 2
-        return is_podcast, default_xa, default_xb
+            # Left speaker crop: strictly bounded to left half (stops at or before mid_x)
+            x_a = max(0, min(int(mid_x - w_isolated), int(round(avg_left - (w_isolated / 2.0)))))
+
+            # Right speaker crop: strictly bounded to right half (starts at or after mid_x)
+            x_b = max(int(mid_x), min(source_w - w_isolated, int(round(avg_right - (w_isolated / 2.0)))))
+
+            return True, x_a, x_b, w_isolated, "split"
+
+        # CASE B: Single-speaker camera close-up (only 1 person visible in shot)
+        # -> Render in FULL SCREEN 9:16 (Centered on that speaker, never duplicate top & bottom!)
+        full_w = int(round(source_h * 9.0 / 16.0))
+        avg_c = sum(all_centroids) / len(all_centroids) if all_centroids else mid_x
+        single_x = max(0, min(source_w - full_w, int(round(avg_c - (full_w / 2.0)))))
+
+        return False, single_x, single_x, full_w, "single_speaker"
 
     except Exception:
-        crop_w = min(source_w, int(round(source_h * 1.125)))
-        return False, 0, max(0, source_w - crop_w)
+        full_w = int(round(source_h * 9.0 / 16.0))
+        return False, 0, 0, full_w, "single_speaker"
 
 
 def build_camera_inset_filtergraph(

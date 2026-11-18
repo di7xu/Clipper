@@ -235,23 +235,24 @@ def process_video(
         title = clip.get("title", f"Clip {idx}")
         print(f"\n  --> Processing Clip {idx}/{len(selected_clips)}: \"{title}\"")
 
-        # Resolve Layout: Check for podcast 2-person dialogue
+        # Resolve Layout: Active Speaker / Shot-aware Directing
         if layout in ("split", "stacked"):
             chosen_layout = "split"
-            _, xa, xb = detect_podcast_speakers(str(source_video), clip["start"], clip["end"] - clip["start"], w, h)
-            layout_cfg = {"speaker_a_x": xa, "speaker_b_x": xb}
+            _, xa, xb, w_iso, _ = detect_podcast_speakers(str(source_video), clip["start"], clip["end"] - clip["start"], w, h)
+            layout_cfg = {"speaker_a_x": xa, "speaker_b_x": xb, "crop_w": w_iso}
         elif layout == "single":
             chosen_layout = "single_speaker"
             layout_cfg = {}
         else: # auto
-            is_split, xa, xb = detect_podcast_speakers(str(source_video), clip["start"], clip["end"] - clip["start"], w, h)
+            is_split, xa, xb, w_iso, mode = detect_podcast_speakers(str(source_video), clip["start"], clip["end"] - clip["start"], w, h)
             if is_split and aspect_ratio == "9:16":
                 chosen_layout = "split"
-                layout_cfg = {"speaker_a_x": xa, "speaker_b_x": xb}
-                print(f"      Podcast 2-speaker shot detected: Applying Top-Bottom Stacked Layout (Speaker A: {xa}px, Speaker B: {xb}px)", flush=True)
+                layout_cfg = {"speaker_a_x": xa, "speaker_b_x": xb, "crop_w": w_iso}
+                print(f"      Dual-speaker wide conversation detected -> Applying Top-Bottom Stacked Layout (Tight crop: {w_iso}px | A: {xa}px | B: {xb}px)", flush=True)
             else:
                 chosen_layout = "single_speaker"
-                layout_cfg = {}
+                layout_cfg = {"crop_x": xa}
+                print(f"      Single-speaker close-up detected -> Applying Full-Screen 9:16 Centered Layout (X: {xa}px)", flush=True)
 
         # Create edit plan
         plan = create_edit_plan(

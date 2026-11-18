@@ -95,12 +95,30 @@ python "c:\MyProject\Mycreate\Clipping\src\cli.py" -u "https://www.youtube.com/w
 python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "interview.mp4" -b "stock_broll.mp4" -o "output_clips" -n 3
 ```
 
-### 4. Podcast 2-Person Stacked Layout (Top-Bottom "Upar-Niche")
+### 4. Active Speaker & Shot-Aware Dynamic Directing
 
-For interviews and 2-person podcasts, the split/stacked layout automatically detects both speakers (Host and Guest) and stacks them vertically (1080x960 each) into a 1080x1920 9:16 frame. This guarantees full visibility of both subjects without slicing faces or bodies in half:
+The auto-directing engine intelligently classifies each camera shot to choose the optimal 9:16 layout:
+
+1. **Single Speaker Active / Camera Close-up (Full-Screen 9:16):**
+   - When only one person is speaking or the camera is a single close-up shot, the engine dynamically centers the frame on that active speaker in full 1080x1920 9:16 format.
+   - **Guaranteed No Duplication:** It never clones or duplicates the same speaker into top and bottom frames.
+2. **Dual-Speaker Conversation / Wide Shot (Top-Bottom Stacked 9:16):**
+   - When both speakers (Host and Guest) are detected simultaneously in a wide shot, the engine splits the video into two vertically stacked 1080x960 frames (`vstack`).
+   - **Strict Midpoint Isolation:** To completely eliminate neighbor edge-bleed (e.g. adjacent hands, shoulders, or half-faces in wide shots), each crop is strictly bounded within its respective side ($W_{isolated} \le 0.46 \times W_{source}$) without crossing the center line.
+
+```mermaid
+flowchart TD
+    Frame[Input Video Shot] --> FaceDetect[Simultaneous Face Detection]
+    FaceDetect -->|1 Face in Shot / Single Close-Up| SingleLayout[Full-Screen 9:16 Centered Pan/Crop]
+    FaceDetect -->|2 Faces in Shot / Wide Podcast Shot| DualLayout[Top-Bottom Stacked Layout 1080x960 each]
+    DualLayout --> Isolation[Strict Midpoint Isolation: Zero Neighbor Bleed]
+    SingleLayout --> FFmpeg[Hardware GPU Rendering h264_qsv]
+    Isolation --> FFmpeg
+```
 
 ```powershell
-python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "podcast.mp4" -o "output_clips" --layout split --task translate
+# Auto-detects single vs dual speaker shots automatically
+python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "podcast.mp4" -o "output_clips" --layout auto --task translate
 ```
 
 ### 5. Antigravity Model Curated Clips (--clips-json)
