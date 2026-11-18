@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest cache
+.pytest_cache/
+
+# Local binary executables (>100MB exceeds GitHub hard limit)
+resources/bin/*.exe
+!resources/bin/README.md
+
+# Workspace temporary files & output directories
+workspace_temp/*
+!workspace_temp/.gitkeep
+output_clips/*
+!output_clips/.gitkeep
+
+# Media files
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.avi
+*.m4v
+*.wav
+*.mp3
+*.aac
+*.ass
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment and IDE files
+.venv/
+env/
+venv/
+.idea/
+.vscode/
