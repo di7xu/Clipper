@@ -7,7 +7,9 @@ from typing import Any, Dict, List
 
 def generate_social_metadata(
     clip: Dict[str, Any],
-    platform_preset: str = "youtube_shorts"
+    platform_preset: str = "youtube_shorts",
+    creator_handle: Optional[str] = None,
+    campaign_hashtags: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """Generate platform-targeted title, hook text, description, and hashtags."""
     title = clip.get("title") or clip.get("hook") or "Must Watch Clip"
@@ -19,7 +21,14 @@ def generate_social_metadata(
     meaningful = [w for w in words if len(w) > 4 and w not in common_stops]
 
     top_keywords = list(dict.fromkeys(meaningful))[:5]
-    hashtags = [f"#{kw}" for kw in top_keywords]
+    hashtags = []
+    if campaign_hashtags:
+        for tag in campaign_hashtags:
+            clean_tag = tag if tag.startswith("#") else f"#{tag}"
+            if clean_tag not in hashtags:
+                hashtags.append(clean_tag)
+
+    hashtags.extend(f"#{kw}" for kw in top_keywords if f"#{kw}" not in hashtags)
 
     # Add platform standard viral tags
     if platform_preset == "youtube_shorts":
@@ -29,12 +38,20 @@ def generate_social_metadata(
     elif platform_preset == "instagram_reels":
         hashtags.extend(["#reels", "#reelsinstagram", "#explorepage", "#creator"])
 
-    description = (
-        f"{title}\n\n"
-        f"Key Takeaway: {transcript[:180]}...\n\n"
-        f"Produced with AI Clipping Studio.\n\n"
-        f"{' '.join(hashtags)}"
-    )
+    desc_lines = []
+    if creator_handle:
+        desc_lines.append(creator_handle.strip())
+        desc_lines.append("")
+    desc_lines.append(title)
+    desc_lines.append("")
+    if transcript:
+        desc_lines.append(f"Key Takeaway: {transcript[:180]}...")
+        desc_lines.append("")
+    desc_lines.append("Produced with AI Clipping Studio.")
+    desc_lines.append("")
+    desc_lines.append(" ".join(hashtags))
+
+    description = "\n".join(desc_lines)
 
     return {
         "title": title,

@@ -148,6 +148,10 @@ python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "podcast.mp4" --clips-json
 | `-m` | `--model` | `tiny`, `base`, `small`, `medium` | `base` | Local `faster-whisper` model size |
 | `-p` | `--platform`| `youtube_shorts`, `tiktok`, `instagram_reels` | `youtube_shorts` | Social metadata platform preset |
 | `-b` | `--broll` | File path | None | Optional stock B-roll cutaway video file to overlay |
+| `-w` | `--watermark` | File path | None | Path to PNG brand logo/campaign watermark image file |
+| | `--watermark-position` | `top_center`, `bottom_center`, `center` | `top_center` | Placement position for brand watermark |
+| | `--creator-handle` | String (e.g. `@iamlexvalentino`) | None | First line creator tag in social description |
+| | `--campaign-tags` | Comma-separated tags | None | Mandatory campaign hashtags (e.g. `#iamlexvalentino,#lexvalentino`) |
 | | `--no-tighten` | Flag | False | Disable filler word and silence trimming |
 | | `--no-captions`| Flag | False | Disable burned-in animated karaoke subtitles |
 

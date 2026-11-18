@@ -135,8 +135,8 @@ def detect_podcast_speakers(
                 continue
 
             faces = tracker.detect_faces(frame)
-            # Filter valid speaker faces
-            valid_faces = [f for f in faces if f.w > 35 and f.score >= 0.65]
+            # Filter valid speaker faces (w >= 70 ignores background picture frames and figurines)
+            valid_faces = [f for f in faces if f.w >= 70 and f.score >= 0.70]
 
             # Count simultaneous faces in this exact frame
             l_in_frame = [f for f in valid_faces if f.centroid_x < mid_x - 30]
@@ -157,8 +157,8 @@ def detect_podcast_speakers(
         # Strict isolation crop width: strictly <= 46% of source width so left & right NEVER overlap
         w_isolated = min(int(round(source_w * 0.46)), int(round(source_h * 0.85)))
 
-        # CASE A: Multiple frames have 2 SIMULTANEOUS faces -> True 2-person wide angle shot!
-        if dual_face_frame_count >= 2 and len(left_xs) >= 2 and len(right_xs) >= 2:
+        # CASE A: Majority (>= 45%) of frames have 2 SIMULTANEOUS faces -> True 2-person wide angle conversation!
+        if dual_face_frame_count >= max(2, int(sample_count * 0.45)) and len(left_xs) >= 2 and len(right_xs) >= 2:
             avg_left = sum(left_xs) / len(left_xs)
             avg_right = sum(right_xs) / len(right_xs)
 

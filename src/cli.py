@@ -103,6 +103,10 @@ def process_video(
     burn_captions: bool = True,
     platform: str = "youtube_shorts",
     broll_path: Optional[str] = None,
+    watermark_path: Optional[str] = None,
+    watermark_position: str = "top_center",
+    creator_handle: Optional[str] = None,
+    campaign_tags: Optional[List[str]] = None,
     target_duration: float = 30.0,
     min_duration: float = 15.0,
     max_duration: float = 60.0
@@ -265,7 +269,9 @@ def process_video(
             tighten=tighten,
             layout=chosen_layout,
             layout_config=layout_cfg,
-            broll_overlays=broll_overlays
+            broll_overlays=broll_overlays,
+            watermark_path=watermark_path,
+            watermark_position=watermark_position
         )
 
         plan_dict = plan.to_dict()
@@ -281,7 +287,12 @@ def process_video(
             print(f"      Rendered successfully: {Path(out_mp4).name}")
 
             # 6. Generate Social Metadata (.meta.json)
-            social_meta = generate_social_metadata(clip, platform_preset=platform)
+            social_meta = generate_social_metadata(
+                clip,
+                platform_preset=platform,
+                creator_handle=creator_handle,
+                campaign_hashtags=campaign_tags
+            )
             meta_file = write_meta_package(social_meta, out_mp4)
             print(f"      Generated social pack: {meta_file.name}")
 
@@ -318,6 +329,10 @@ def main():
     parser.add_argument("-m", "--model", choices=["tiny", "base", "small", "medium"], default="base", help="Whisper model size (default: base)")
     parser.add_argument("-p", "--platform", choices=["youtube_shorts", "tiktok", "instagram_reels"], default="youtube_shorts", help="Social media preset (default: youtube_shorts)")
     parser.add_argument("-b", "--broll", help="Optional path to B-roll video file for stock cutaway overlays")
+    parser.add_argument("-w", "--watermark", help="Optional path to PNG watermark/brand logo image file")
+    parser.add_argument("--watermark-position", choices=["top_center", "bottom_center", "center"], default="top_center", help="Watermark placement position (default: top_center)")
+    parser.add_argument("--creator-handle", default=None, help="Creator social handle to include as first line in caption (e.g. '@iamlexvalentino')")
+    parser.add_argument("--campaign-tags", default=None, help="Comma-separated campaign hashtags (e.g. '#iamlexvalentino,#lexvalentino')")
     parser.add_argument("-l", "--layout", choices=["auto", "single", "split", "stacked"], default="auto", help="Video framing layout: auto (podcast split detection), single (centered face), or split/stacked (top-bottom) (default: auto)")
     parser.add_argument("-t", "--task", choices=["translate", "transcribe"], default="translate", help="Whisper task: translate (translates foreign speech to clean English) or transcribe (default: translate)")
     parser.add_argument("--lang", "--language", dest="language", default=None, help="Spoken language code (e.g. 'hi' for Hindi, default: auto-detect)")
@@ -343,7 +358,11 @@ def main():
             tighten=not args.no_tighten,
             burn_captions=not args.no_captions,
             platform=args.platform,
-            broll_path=args.broll
+            broll_path=args.broll,
+            watermark_path=args.watermark,
+            watermark_position=args.watermark_position,
+            creator_handle=args.creator_handle,
+            campaign_tags=[t.strip() for t in args.campaign_tags.split(",")] if args.campaign_tags else None
         )
         print(f"Completed! {len(results)} clips generated.")
     except Exception as e:

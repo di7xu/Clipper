@@ -58,6 +58,9 @@ class RenderEngine:
         keep_ranges = edit_plan.get("keepRanges", [(0.0, clip_duration)])
         raw_broll = edit_plan.get("brollOverlays", [])
         broll_overlays = normalize_broll_overlays(raw_broll, clip_duration=clip_duration)
+        watermark_path = edit_plan.get("watermarkPath")
+        watermark_pos = edit_plan.get("watermarkPosition", "top_center")
+        has_watermark = bool(watermark_path and Path(watermark_path).is_file())
         layout_type = edit_plan.get("layout", "single_speaker")
         layout_config = edit_plan.get("layoutConfig", {})
         is_split_layout = (layout_type in ("split", "split_screen", "stacked", "podcast_split")) and (aspect == "9:16")
@@ -93,8 +96,8 @@ class RenderEngine:
                 sub_filter = f"subtitles='{escaped_ass}':fontsdir='{escaped_fonts}'"
 
             # Step 2: Build FFmpeg Command Line
-            if len(keep_ranges) == 1 and not broll_overlays and not is_split_layout:
-                # Optimized single range without B-roll or multi-speaker split
+            if len(keep_ranges) == 1 and not broll_overlays and not is_split_layout and not has_watermark:
+                # Optimized single range without B-roll, watermark, or multi-speaker split
                 k_start, k_end = keep_ranges[0]
                 exact_start = clip_start + k_start
                 exact_dur = k_end - k_start
@@ -127,12 +130,19 @@ class RenderEngine:
                     str(config.ffmpeg_path),
                     "-y",
                     "-nostdin",
+                    "-ss", str(clip_start),
                     "-i", str(source_path),
                 ]
 
                 # Append B-roll input files
                 if broll_overlays:
                     cmd.extend(broll_input_args(broll_overlays))
+
+                # Append Watermark input file
+                wm_input_idx = -1
+                if has_watermark:
+                    wm_input_idx = 1 + len(broll_overlays)
+                    cmd.extend(["-i", str(Path(watermark_path).resolve())])
 
                 complex_parts: List[str] = []
 
@@ -158,26 +168,22 @@ class RenderEngine:
 
                 if len(keep_ranges) == 1:
                     k_s, k_e = keep_ranges[0]
-                    abs_s = clip_start + k_s
-                    abs_e = clip_start + k_e
 
                     if is_split_layout:
-                        complex_parts.append(f"[0:v]trim=start={abs_s}:end={abs_e},setpts=PTS-STARTPTS,split=2[in_top][in_bot]")
+                        complex_parts.append(f"[0:v]trim=start={k_s}:end={k_e},setpts=PTS-STARTPTS,split=2[in_top][in_bot]")
                         complex_parts.append(f"[in_top]crop={crop_w}:{s_h}:{spk_a_x}:0,scale={target_w}:{half_h}[top_v]")
                         complex_parts.append(f"[in_bot]crop={crop_w}:{s_h}:{spk_b_x}:0,scale={target_w}:{half_h}[bot_v]")
                         complex_parts.append(f"[top_v][bot_v]vstack=inputs=2[base_v]")
                     else:
-                        complex_parts.append(f"[0:v]trim=start={abs_s}:end={abs_e},setpts=PTS-STARTPTS,{reframe_filter}[base_v]")
+                        complex_parts.append(f"[0:v]trim=start={k_s}:end={k_e},setpts=PTS-STARTPTS,{reframe_filter}[base_v]")
 
-                    complex_parts.append(f"[0:a]atrim=start={abs_s}:end={abs_e},asetpts=PTS-STARTPTS[a_cat]")
+                    complex_parts.append(f"[0:a]atrim=start={k_s}:end={k_e},asetpts=PTS-STARTPTS[a_cat]")
 
                 else:
                     # Concat keep ranges for speech tightening
                     for idx, (k_start, k_end) in enumerate(keep_ranges):
-                        abs_s = clip_start + k_start
-                        abs_e = clip_start + k_end
-                        complex_parts.append(f"[0:v]trim=start={abs_s}:end={abs_e},setpts=PTS-STARTPTS[v{idx}]")
-                        complex_parts.append(f"[0:a]atrim=start={abs_s}:end={abs_e},asetpts=PTS-STARTPTS[a{idx}]")
+                        complex_parts.append(f"[0:v]trim=start={k_start}:end={k_end},setpts=PTS-STARTPTS[v{idx}]")
+                        complex_parts.append(f"[0:a]atrim=start={k_start}:end={k_end},asetpts=PTS-STARTPTS[a{idx}]")
 
                     v_inputs = "".join(f"[v{i}]" for i in range(len(keep_ranges)))
                     a_inputs = "".join(f"[a{i}]" for i in range(len(keep_ranges)))
@@ -204,6 +210,21 @@ class RenderEngine:
                         first_input=1
                     )
                     complex_parts.append(broll_graph)
+
+                # Apply Watermark overlay if present
+                if has_watermark and wm_input_idx >= 0:
+                    wm_w = min(int(target_w * 0.67), 720)
+                    complex_parts.append(f"[{wm_input_idx}:v]scale={wm_w}:-1[wm_scaled]")
+                    if watermark_pos == "top_center":
+                        overlay_xy = "x=(W-w)/2:y=180"
+                    elif watermark_pos == "bottom_center":
+                        overlay_xy = "x=(W-w)/2:y=H-h-240"
+                    elif watermark_pos == "center":
+                        overlay_xy = "x=(W-w)/2:y=(H-h)/2"
+                    else:
+                        overlay_xy = "x=(W-w)/2:y=180"
+                    complex_parts.append(f"{current_v}[wm_scaled]overlay={overlay_xy}[wm_v]")
+                    current_v = "[wm_v]"
 
                 if audio_norm:
                     norm_filter = "loudnorm=I=-16:TP=-1.5:LRA=11"

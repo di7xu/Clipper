@@ -34,6 +34,8 @@ class EditPlan:
     words: List[Dict[str, Any]] = field(default_factory=list)
     punch_ins: List[Dict[str, Any]] = field(default_factory=list)
     broll_overlays: List[Dict[str, Any]] = field(default_factory=list)
+    watermark_path: Optional[str] = None
+    watermark_position: str = "top_center"
     audio_norm: bool = True
     encoder: str = "auto"
 
@@ -56,6 +58,8 @@ class EditPlan:
             "words": self.words,
             "punchIns": self.punch_ins,
             "brollOverlays": self.broll_overlays,
+            "watermarkPath": self.watermark_path,
+            "watermarkPosition": self.watermark_position,
             "audioNorm": self.audio_norm,
             "encoder": self.encoder
         }
@@ -72,7 +76,9 @@ def create_edit_plan(
     layout: str = "single_speaker",
     layout_config: Optional[Dict[str, Any]] = None,
     audio_norm: bool = True,
-    broll_overlays: Optional[List[Dict[str, Any]]] = None
+    broll_overlays: Optional[List[Dict[str, Any]]] = None,
+    watermark_path: Optional[str] = None,
+    watermark_position: str = "top_center"
 ) -> EditPlan:
     """Construct and configure an optimized Edit Plan for a candidate clip."""
     clip_id = clip.get("id", "clip_01")
@@ -128,6 +134,8 @@ def create_edit_plan(
         words=active_words,
         punch_ins=punch_ins,
         broll_overlays=broll_overlays or [],
+        watermark_path=watermark_path,
+        watermark_position=watermark_position,
         audio_norm=audio_norm,
         encoder=preferred_encoder
     )
