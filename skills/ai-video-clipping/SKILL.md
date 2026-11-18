@@ -95,10 +95,20 @@ python "c:\MyProject\Mycreate\Clipping\src\cli.py" -u "https://www.youtube.com/w
 python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "interview.mp4" -b "stock_broll.mp4" -o "output_clips" -n 3
 ```
 
-### 4. Custom Social Platform & Subtitle Preset
+### 4. Podcast 2-Person Stacked Layout (Top-Bottom "Upar-Niche")
+
+For interviews and 2-person podcasts, the split/stacked layout automatically detects both speakers (Host and Guest) and stacks them vertically (1080x960 each) into a 1080x1920 9:16 frame. This guarantees full visibility of both subjects without slicing faces or bodies in half:
 
 ```powershell
-python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "podcast.mp4" -o "reels_clips" -n 5 --aspect 9:16 --platform instagram_reels --style clean_cyan
+python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "podcast.mp4" -o "output_clips" --layout split --task translate
+```
+
+### 5. Antigravity Model Curated Clips (--clips-json)
+
+Use the Antigravity LLM's superior context and YouTube knowledge to curate and confirm exact clip timestamps:
+
+```powershell
+python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "podcast.mp4" --clips-json "curated_clips.json" --layout auto --task translate
 ```
 
 ---
@@ -113,6 +123,10 @@ python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "podcast.mp4" -o "reels_cl
 | `-n` | `--count` | Integer | `3` | Number of top viral clips to extract and render |
 | `-a` | `--aspect` | `9:16`, `1:1`, `16:9` | `9:16` | Output aspect ratio |
 | `-s` | `--style` | `viral_yellow`, `clean_cyan`, `bold_coral`, `minimal_white` | `viral_yellow` | Caption karaoke style preset |
+| `-l` | `--layout` | `auto`, `single`, `split`, `stacked` | `auto` | Framing layout: auto (detects podcast 2-speakers), single (centered), or split/stacked (top-bottom) |
+| `-t` | `--task` | `translate`, `transcribe` | `translate` | Whisper task: translate (translates foreign speech to clean English) or transcribe |
+| | `--lang` | Language code (e.g. `hi`) | None | Source spoken language code (default: auto-detect) |
+| | `--clips-json` | Path or JSON string | None | Path or JSON string of model-curated clips `[{start, end, title}]` |
 | `-m` | `--model` | `tiny`, `base`, `small`, `medium` | `base` | Local `faster-whisper` model size |
 | `-p` | `--platform`| `youtube_shorts`, `tiktok`, `instagram_reels` | `youtube_shorts` | Social metadata platform preset |
 | `-b` | `--broll` | File path | None | Optional stock B-roll cutaway video file to overlay |

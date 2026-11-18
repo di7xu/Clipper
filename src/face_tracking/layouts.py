@@ -71,20 +71,89 @@ def build_split_filtergraph(
     speaker_a_x: int,
     speaker_b_x: int,
     out_width: int = 1080,
-    out_height: int = 1920
+    out_height: int = 1920,
+    input_label: str = "0:v",
+    output_label: str = "v_stacked"
 ) -> str:
     """Construct an FFmpeg filtergraph stacking two cropped speakers into 9:16 vertical."""
     half_h = out_height // 2  # 960
-    crop_w = int(round(source_height * (out_width / half_h)))  # 1215 for 1080p
+    crop_w = int(round(source_height * (out_width / half_h)))  # 810 for 720p, 1215 for 1080p
     crop_w = min(crop_w, source_width)
 
+    x_a = max(0, min(source_width - crop_w, speaker_a_x))
+    x_b = max(0, min(source_width - crop_w, speaker_b_x))
+
     filtergraph = (
-        f"[0:v]split=2[in_a][in_b];"
-        f"[in_a]crop={crop_w}:{source_height}:{speaker_a_x}:0,scale={out_width}:{half_h}[top];"
-        f"[in_b]crop={crop_w}:{source_height}:{speaker_b_x}:0,scale={out_width}:{half_h}[bottom];"
-        f"[top][bottom]vstack=inputs=2[v_stacked]"
+        f"[{input_label}]split=2[in_a][in_b];"
+        f"[in_a]crop={crop_w}:{source_height}:{x_a}:0,scale={out_width}:{half_h}[top];"
+        f"[in_b]crop={crop_w}:{source_height}:{x_b}:0,scale={out_width}:{half_h}[bottom];"
+        f"[top][bottom]vstack=inputs=2[{output_label}]"
     )
     return filtergraph
+
+
+def detect_podcast_speakers(
+    video_path: str,
+    start_time: float,
+    duration: float,
+    source_w: int,
+    source_h: int
+) -> Tuple[bool, int, int]:
+    """Detect if the clip contains two distinct speakers (podcast/interview)
+    and return their optimal horizontal crop offsets (x_a, x_b).
+    """
+    try:
+        import cv2
+        from .tracker import FaceTracker
+
+        tracker = FaceTracker()
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            crop_w = min(source_w, int(round(source_h * 1.125)))
+            return False, 0, max(0, source_w - crop_w)
+
+        left_xs: List[float] = []
+        right_xs: List[float] = []
+
+        # Sample 6 frames evenly across the segment
+        sample_count = 6
+        step = max(0.5, duration / max(1, sample_count))
+        for i in range(sample_count):
+            t = start_time + (i * step)
+            cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            faces = tracker.detect_faces(frame)
+            for f in faces:
+                if f.w > 35 and f.score >= 0.65:
+                    if f.centroid_x < source_w * 0.48:
+                        left_xs.append(f.centroid_x)
+                    elif f.centroid_x > source_w * 0.52:
+                        right_xs.append(f.centroid_x)
+
+        cap.release()
+
+        half_h = 960
+        crop_w = min(source_w, int(round(source_h * (1080 / half_h))))
+
+        # Two distinct clusters found -> podcast dialogue
+        if len(left_xs) >= 1 and len(right_xs) >= 1:
+            avg_left = sum(left_xs) / len(left_xs)
+            avg_right = sum(right_xs) / len(right_xs)
+            x_a = max(0, min(source_w - crop_w, int(round(avg_left - crop_w / 2.0))))
+            x_b = max(0, min(source_w - crop_w, int(round(avg_right - crop_w / 2.0))))
+            return True, x_a, x_b
+
+        # Fallback default positions for podcast wide-shot (left half & right half)
+        default_xa = 0
+        default_xb = max(0, source_w - crop_w)
+        is_podcast = (len(left_xs) + len(right_xs)) >= 2
+        return is_podcast, default_xa, default_xb
+
+    except Exception:
+        crop_w = min(source_w, int(round(source_h * 1.125)))
+        return False, 0, max(0, source_w - crop_w)
 
 
 def build_camera_inset_filtergraph(

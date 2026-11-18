@@ -102,9 +102,10 @@ class TranscribeEngine:
         media_path: str,
         output_json: Optional[str] = None,
         model_size: str = "base",
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        task: str = "translate"
     ) -> Dict[str, Any]:
-        """Extract audio and transcribe with word-level timestamps and Silero VAD filtering."""
+        """Extract audio and transcribe with word-level timestamps, Silero VAD, and English translation."""
         input_file = Path(media_path).resolve()
         if not input_file.is_file():
             raise TranscribeError(f"Input file not found: {media_path}")
@@ -115,8 +116,12 @@ class TranscribeEngine:
                 with open(output_json, "r", encoding="utf-8") as f:
                     cached = json.load(f)
                     if "words" in cached and "segments" in cached:
-                        print(f"[Whisper] Loaded cached transcript from: {output_json}")
-                        return cached
+                        # Verify cache language is clean
+                        cached_text = cached.get("text", "")
+                        has_non_ascii = any(ord(c) > 0x05FF for c in cached_text[:100])
+                        if not (task == "translate" and has_non_ascii):
+                            print(f"[Whisper] Loaded cached transcript from: {output_json}")
+                            return cached
             except Exception:
                 pass
 
@@ -131,9 +136,12 @@ class TranscribeEngine:
             model = self.get_or_load_model(model_size)
 
             # Step 3: Run Transcription with Word Timestamps & Silero VAD
-            self._emit_progress(50, "Transcribing speech and extracting word boundaries...")
+            self._emit_progress(50, f"Processing speech (task={task}, lang={language or 'auto'})...")
             import wave
             import numpy as np
+            import re
+
+            urdu_arabic_re = re.compile(r'[\u0600-\u06FF\u0750-\u077F]')
 
             with wave.open(str(temp_wav), "rb") as wf:
                 num_frames = wf.getnframes()
@@ -146,20 +154,24 @@ class TranscribeEngine:
                 word_timestamps=True,
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=400),
-                language=language
+                language=language,
+                task=task
             )
 
             all_segments: List[Dict[str, Any]] = []
             all_words: List[Dict[str, Any]] = []
 
             total_dur = getattr(info, "duration", 0.0) or (len(audio_array) / 16000.0)
-            print(f"  [Whisper] Detected Language: {info.language} ({info.language_probability * 100:.1f}%) | Audio Duration: {total_dur:.1f}s", flush=True)
+            print(f"  [Whisper] Mode: {task.upper()} | Detected Audio Language: {info.language} ({info.language_probability * 100:.1f}%) | Duration: {total_dur:.1f}s", flush=True)
 
             for seg_idx, segment in enumerate(segments_gen):
                 seg_words: List[Dict[str, Any]] = []
                 if segment.words:
                     for w in segment.words:
                         cleaned = w.word.strip()
+                        # If task is translate, reject any residual non-Latin Arabic/Urdu tokens
+                        if task == "translate" and urdu_arabic_re.search(cleaned):
+                            continue
                         if cleaned:
                             word_dict = {
                                 "word": cleaned,
@@ -170,17 +182,22 @@ class TranscribeEngine:
                             seg_words.append(word_dict)
                             all_words.append(word_dict)
 
-                all_segments.append({
-                    "id": seg_idx,
-                    "start": round(segment.start, 3),
-                    "end": round(segment.end, 3),
-                    "text": segment.text.strip(),
-                    "words": seg_words
-                })
+                seg_text = segment.text.strip()
+                if task == "translate" and urdu_arabic_re.search(seg_text):
+                    seg_text = " ".join(w["word"] for w in seg_words)
+
+                if seg_text or seg_words:
+                    all_segments.append({
+                        "id": seg_idx,
+                        "start": round(segment.start, 3),
+                        "end": round(segment.end, 3),
+                        "text": seg_text,
+                        "words": seg_words
+                    })
 
                 if total_dur > 0 and (seg_idx % 4 == 0 or segment.end >= total_dur - 1.0):
                     pct = min(99, int((segment.end / total_dur) * 100))
-                    print(f"  [Whisper] Progress: {pct}% ({segment.end:.0f}s / {total_dur:.0f}s) -> \"{segment.text.strip()[:45]}\"", flush=True)
+                    print(f"  [Whisper] Progress: {pct}% ({segment.end:.0f}s / {total_dur:.0f}s) -> \"{seg_text[:45]}\"", flush=True)
 
             result = {
                 "language": info.language,

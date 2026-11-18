@@ -58,6 +58,9 @@ class RenderEngine:
         keep_ranges = edit_plan.get("keepRanges", [(0.0, clip_duration)])
         raw_broll = edit_plan.get("brollOverlays", [])
         broll_overlays = normalize_broll_overlays(raw_broll, clip_duration=clip_duration)
+        layout_type = edit_plan.get("layout", "single_speaker")
+        layout_config = edit_plan.get("layoutConfig", {})
+        is_split_layout = (layout_type in ("split", "split_screen", "stacked", "podcast_split")) and (aspect == "9:16")
 
         # Temporary subtitle file
         ass_temp_path = config.temp_dir / f"subs_{int(time.time() * 1000)}.ass"
@@ -90,8 +93,8 @@ class RenderEngine:
                 sub_filter = f"subtitles='{escaped_ass}':fontsdir='{escaped_fonts}'"
 
             # Step 2: Build FFmpeg Command Line
-            if len(keep_ranges) == 1 and not broll_overlays:
-                # Optimized single range without B-roll
+            if len(keep_ranges) == 1 and not broll_overlays and not is_split_layout:
+                # Optimized single range without B-roll or multi-speaker split
                 k_start, k_end = keep_ranges[0]
                 exact_start = clip_start + k_start
                 exact_dur = k_end - k_start
@@ -119,7 +122,7 @@ class RenderEngine:
                 cmd.extend(["-progress", "pipe:1", str(output_path)])
 
             else:
-                # Filter-complex pipeline (handles multi-cut tightening and/or B-roll overlays)
+                # Filter-complex pipeline (handles split stacked podcast layout, multi-cut tightening, B-roll overlays)
                 cmd = [
                     str(config.ffmpeg_path),
                     "-y",
@@ -133,14 +136,40 @@ class RenderEngine:
 
                 complex_parts: List[str] = []
 
+                if is_split_layout:
+                    # Resolve source dimensions for podcast split layout
+                    from video.probe import probe_video
+                    try:
+                        s_info = probe_video(str(source_path))
+                        s_w, s_h = int(s_info["width"]), int(s_info["height"])
+                    except Exception:
+                        s_w, s_h = 1280, 720
+
+                    half_h = target_h // 2  # 960
+                    crop_w = min(s_w, int(round(s_h * (target_w / half_h))))  # 810 for 720p
+
+                    spk_a_x = layout_config.get("speaker_a_x", 0)
+                    spk_b_x = layout_config.get("speaker_b_x", max(0, s_w - crop_w))
+                    spk_a_x = max(0, min(s_w - crop_w, int(spk_a_x)))
+                    spk_b_x = max(0, min(s_w - crop_w, int(spk_b_x)))
+
                 if len(keep_ranges) == 1:
                     k_s, k_e = keep_ranges[0]
                     abs_s = clip_start + k_s
                     abs_e = clip_start + k_e
-                    complex_parts.append(f"[0:v]trim=start={abs_s}:end={abs_e},setpts=PTS-STARTPTS,{reframe_filter}[base_v]")
+
+                    if is_split_layout:
+                        complex_parts.append(f"[0:v]trim=start={abs_s}:end={abs_e},setpts=PTS-STARTPTS,split=2[in_top][in_bot]")
+                        complex_parts.append(f"[in_top]crop={crop_w}:{s_h}:{spk_a_x}:0,scale={target_w}:{half_h}[top_v]")
+                        complex_parts.append(f"[in_bot]crop={crop_w}:{s_h}:{spk_b_x}:0,scale={target_w}:{half_h}[bot_v]")
+                        complex_parts.append(f"[top_v][bot_v]vstack=inputs=2[base_v]")
+                    else:
+                        complex_parts.append(f"[0:v]trim=start={abs_s}:end={abs_e},setpts=PTS-STARTPTS,{reframe_filter}[base_v]")
+
                     complex_parts.append(f"[0:a]atrim=start={abs_s}:end={abs_e},asetpts=PTS-STARTPTS[a_cat]")
+
                 else:
-                    # Concat keep ranges
+                    # Concat keep ranges for speech tightening
                     for idx, (k_start, k_end) in enumerate(keep_ranges):
                         abs_s = clip_start + k_start
                         abs_e = clip_start + k_end
@@ -149,7 +178,15 @@ class RenderEngine:
 
                     v_inputs = "".join(f"[v{i}]" for i in range(len(keep_ranges)))
                     a_inputs = "".join(f"[a{i}]" for i in range(len(keep_ranges)))
-                    complex_parts.append(f"{v_inputs}concat=n={len(keep_ranges)}:v=1:a=0,{reframe_filter}[base_v]")
+
+                    if is_split_layout:
+                        complex_parts.append(f"{v_inputs}concat=n={len(keep_ranges)}:v=1:a=0,split=2[in_top][in_bot]")
+                        complex_parts.append(f"[in_top]crop={crop_w}:{s_h}:{spk_a_x}:0,scale={target_w}:{half_h}[top_v]")
+                        complex_parts.append(f"[in_bot]crop={crop_w}:{s_h}:{spk_b_x}:0,scale={target_w}:{half_h}[bot_v]")
+                        complex_parts.append(f"[top_v][bot_v]vstack=inputs=2[base_v]")
+                    else:
+                        complex_parts.append(f"{v_inputs}concat=n={len(keep_ranges)}:v=1:a=0,{reframe_filter}[base_v]")
+
                     complex_parts.append(f"{a_inputs}concat=n={len(keep_ranges)}:v=0:a=1[a_cat]")
 
                 current_v = "[base_v]"

@@ -27,6 +27,7 @@ class EditPlan:
     target_width: int = 1080
     target_height: int = 1920
     layout: str = "single_speaker"
+    layout_config: Dict[str, Any] = field(default_factory=dict)
     caption_style: str = "viral_yellow"
     tighten: bool = True
     keep_ranges: List[Tuple[float, float]] = field(default_factory=list)
@@ -48,6 +49,7 @@ class EditPlan:
             "targetWidth": self.target_width,
             "targetHeight": self.target_height,
             "layout": self.layout,
+            "layoutConfig": self.layout_config,
             "captionStyle": self.caption_style,
             "tighten": self.tighten,
             "keepRanges": self.keep_ranges,
@@ -68,6 +70,7 @@ def create_edit_plan(
     caption_style: str = "viral_yellow",
     tighten: bool = True,
     layout: str = "single_speaker",
+    layout_config: Optional[Dict[str, Any]] = None,
     audio_norm: bool = True,
     broll_overlays: Optional[List[Dict[str, Any]]] = None
 ) -> EditPlan:
@@ -118,6 +121,7 @@ def create_edit_plan(
         target_width=w,
         target_height=h,
         layout=layout,
+        layout_config=layout_config or {},
         caption_style=caption_style,
         tighten=tighten,
         keep_ranges=keep_ranges,

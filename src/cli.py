@@ -36,6 +36,7 @@ from clip_detection.score_clips import ClipScorer
 from editor.edit_plan import create_edit_plan
 from editor.tighten import plan_cuts
 from export.social_pack import generate_social_metadata, write_meta_package
+from face_tracking.layouts import detect_podcast_speakers
 from rendering.engine import RenderEngine
 from transcription.engine import TranscribeEngine
 from video.probe import probe_video, validate_media_file
@@ -94,6 +95,10 @@ def process_video(
     aspect_ratio: str = "9:16",
     caption_style: str = "viral_yellow",
     whisper_model: str = "base",
+    task: str = "translate",
+    language: Optional[str] = None,
+    layout: str = "auto",
+    clips_json: Optional[str] = None,
     tighten: bool = True,
     burn_captions: bool = True,
     platform: str = "youtube_shorts",
@@ -132,13 +137,15 @@ def process_video(
     print(f"  Duration: {dur:.1f}s | Resolution: {w}x{h} ({media_info['aspectRatio']}) | FPS: {media_info['fps']}")
 
     # 3. Transcribe with local faster-whisper
-    transcript_cache = out_dir / f"{source_video.stem}_transcript.json"
-    print(f"\n[2/6] Transcribing speech with local faster-whisper ({whisper_model} model)...")
+    transcript_cache = out_dir / f"{source_video.stem}_transcript_{task}.json"
+    print(f"\n[2/6] Transcribing speech with local faster-whisper ({whisper_model} model, task={task})...")
     transcribe_engine = TranscribeEngine()
     transcript = transcribe_engine.transcribe(
         media_path=str(source_video),
         output_json=str(transcript_cache),
-        model_size=whisper_model
+        model_size=whisper_model,
+        language=language,
+        task=task
     )
     words = transcript.get("words", [])
     sentences = transcript.get("sentences", [])
@@ -147,34 +154,59 @@ def process_video(
     if not words:
         print("  Warning: No speech detected in video. Proceeding with video highlights.")
 
-    # 4. Multimodal Clip Scoring (Chopify heuristic brain - 0 API cost)
-    print("\n[3/6] Scoring viral candidate clips (Hooks, Emotion, Energy & Story Arc)...")
-    scorer = ClipScorer()
-    candidates = scorer.score_project(
-        transcript=transcript,
-        options={
-            "min_len": min_duration,
-            "max_len": max_duration,
-            "target_len": target_duration
-        }
-    )
+    # 4. Multimodal Clip Selection (Model-Curated or Heuristic Scoring)
+    if clips_json:
+        import json
+        print(f"\n[3/6] Loading Antigravity Model confirmed clips from: {clips_json[:40]}...")
+        if os.path.isfile(clips_json):
+            with open(clips_json, "r", encoding="utf-8") as f:
+                curated_raw = json.load(f)
+        else:
+            curated_raw = json.loads(clips_json)
 
-    if not candidates:
-        print("  No candidate clips met the criteria. Creating full video clip.")
-        candidates = [{
-            "id": "clip_01",
-            "start": 0.0,
-            "end": min(dur, max_duration),
-            "title": source_video.stem[:40],
-            "hook": "Must watch highlight",
-            "overallScore": 85.0,
-            "transcript": transcript.get("text", "")[:200],
-            "words": words
-        }]
+        selected_clips = []
+        for c_idx, c in enumerate(curated_raw, 1):
+            c_start = float(c["start"])
+            c_end = float(c["end"])
+            c_words = [w for w in words if float(w.get("start", 0)) >= c_start - 0.2 and float(w.get("end", 0)) <= c_end + 0.2]
+            selected_clips.append({
+                "id": c.get("id", f"clip_{c_idx:02d}"),
+                "start": c_start,
+                "end": c_end,
+                "title": c.get("title", f"Clip {c_idx}"),
+                "hook": c.get("hook", c.get("title", "")),
+                "overallScore": float(c.get("score", 95.0)),
+                "words": c_words
+            })
+    else:
+        print("\n[3/6] Scoring viral candidate clips (Hooks, Emotion, Energy & Story Arc)...")
+        scorer = ClipScorer()
+        candidates = scorer.score_project(
+            transcript=transcript,
+            options={
+                "min_len": min_duration,
+                "max_len": max_duration,
+                "target_len": target_duration
+            }
+        )
 
-    # Select top N clips
-    selected_clips = candidates[:clip_count]
-    print(f"  Found {len(candidates)} candidates. Selected top {len(selected_clips)} clips:")
+        if not candidates:
+            print("  No candidate clips met the criteria. Creating full video clip.")
+            candidates = [{
+                "id": "clip_01",
+                "start": 0.0,
+                "end": min(dur, max_duration),
+                "title": source_video.stem[:40],
+                "hook": "Must watch highlight",
+                "overallScore": 85.0,
+                "transcript": transcript.get("text", "")[:200],
+                "words": words
+            }]
+
+        # Select top N clips
+        selected_clips = candidates[:clip_count]
+
+    print(f"  Selected top {len(selected_clips)} clips for production:")
     for idx, c in enumerate(selected_clips, 1):
         c_dur = c["end"] - c["start"]
         print(f"    {idx}. [{c['overallScore']:.1f} pts] \"{c.get('title', 'Clip')}\" ({c['start']:.1f}s - {c['end']:.1f}s | {c_dur:.1f}s)")
@@ -203,6 +235,24 @@ def process_video(
         title = clip.get("title", f"Clip {idx}")
         print(f"\n  --> Processing Clip {idx}/{len(selected_clips)}: \"{title}\"")
 
+        # Resolve Layout: Check for podcast 2-person dialogue
+        if layout in ("split", "stacked"):
+            chosen_layout = "split"
+            _, xa, xb = detect_podcast_speakers(str(source_video), clip["start"], clip["end"] - clip["start"], w, h)
+            layout_cfg = {"speaker_a_x": xa, "speaker_b_x": xb}
+        elif layout == "single":
+            chosen_layout = "single_speaker"
+            layout_cfg = {}
+        else: # auto
+            is_split, xa, xb = detect_podcast_speakers(str(source_video), clip["start"], clip["end"] - clip["start"], w, h)
+            if is_split and aspect_ratio == "9:16":
+                chosen_layout = "split"
+                layout_cfg = {"speaker_a_x": xa, "speaker_b_x": xb}
+                print(f"      Podcast 2-speaker shot detected: Applying Top-Bottom Stacked Layout (Speaker A: {xa}px, Speaker B: {xb}px)", flush=True)
+            else:
+                chosen_layout = "single_speaker"
+                layout_cfg = {}
+
         # Create edit plan
         plan = create_edit_plan(
             clip=clip,
@@ -212,6 +262,8 @@ def process_video(
             aspect_ratio=aspect_ratio,
             caption_style=caption_style if burn_captions else "minimal_white",
             tighten=tighten,
+            layout=chosen_layout,
+            layout_config=layout_cfg,
             broll_overlays=broll_overlays
         )
 
@@ -265,6 +317,10 @@ def main():
     parser.add_argument("-m", "--model", choices=["tiny", "base", "small", "medium"], default="base", help="Whisper model size (default: base)")
     parser.add_argument("-p", "--platform", choices=["youtube_shorts", "tiktok", "instagram_reels"], default="youtube_shorts", help="Social media preset (default: youtube_shorts)")
     parser.add_argument("-b", "--broll", help="Optional path to B-roll video file for stock cutaway overlays")
+    parser.add_argument("-l", "--layout", choices=["auto", "single", "split", "stacked"], default="auto", help="Video framing layout: auto (podcast split detection), single (centered face), or split/stacked (top-bottom) (default: auto)")
+    parser.add_argument("-t", "--task", choices=["translate", "transcribe"], default="translate", help="Whisper task: translate (translates foreign speech to clean English) or transcribe (default: translate)")
+    parser.add_argument("--lang", "--language", dest="language", default=None, help="Spoken language code (e.g. 'hi' for Hindi, default: auto-detect)")
+    parser.add_argument("--clips-json", default=None, help="Path to JSON file or raw JSON string of model-curated clips [{start, end, title}]")
     parser.add_argument("--no-tighten", action="store_true", help="Disable filler word and silence tightening")
     parser.add_argument("--no-captions", action="store_true", help="Disable burned-in animated karaoke captions")
 
@@ -279,6 +335,10 @@ def main():
             aspect_ratio=args.aspect,
             caption_style=args.style,
             whisper_model=args.model,
+            task=args.task,
+            language=args.language,
+            layout=args.layout,
+            clips_json=args.clips_json,
             tighten=not args.no_tighten,
             burn_captions=not args.no_captions,
             platform=args.platform,
