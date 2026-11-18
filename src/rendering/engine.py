@@ -200,6 +200,7 @@ class RenderEngine:
 
             log_lines: List[str] = []
             expected_micros = int(clip_duration * 1_000_000)
+            last_pct = -20
             while True:
                 line = proc.stdout.readline()
                 if not line:
@@ -210,6 +211,9 @@ class RenderEngine:
                     try:
                         curr_us = int(stripped.split("=")[1])
                         pct = min(99, int((curr_us / expected_micros) * 100))
+                        if pct >= last_pct + 20:
+                            print(f"      [Render Engine] Progress: {pct}% complete", flush=True)
+                            last_pct = pct
                         self._emit_progress(pct, f"Rendering video ({pct}%)...")
                     except Exception:
                         pass

@@ -152,6 +152,9 @@ class TranscribeEngine:
             all_segments: List[Dict[str, Any]] = []
             all_words: List[Dict[str, Any]] = []
 
+            total_dur = getattr(info, "duration", 0.0) or (len(audio_array) / 16000.0)
+            print(f"  [Whisper] Detected Language: {info.language} ({info.language_probability * 100:.1f}%) | Audio Duration: {total_dur:.1f}s", flush=True)
+
             for seg_idx, segment in enumerate(segments_gen):
                 seg_words: List[Dict[str, Any]] = []
                 if segment.words:
@@ -174,6 +177,10 @@ class TranscribeEngine:
                     "text": segment.text.strip(),
                     "words": seg_words
                 })
+
+                if total_dur > 0 and (seg_idx % 4 == 0 or segment.end >= total_dur - 1.0):
+                    pct = min(99, int((segment.end / total_dur) * 100))
+                    print(f"  [Whisper] Progress: {pct}% ({segment.end:.0f}s / {total_dur:.0f}s) -> \"{segment.text.strip()[:45]}\"", flush=True)
 
             result = {
                 "language": info.language,

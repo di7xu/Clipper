@@ -24,6 +24,12 @@ SRC_DIR = Path(__file__).resolve().parent
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+# Ensure real-time line buffering so logs never buffer
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 from config import config
 from captions.compiler import compile_ass_subtitles
 from clip_detection.score_clips import ClipScorer
@@ -38,10 +44,19 @@ from video.probe import probe_video, validate_media_file
 def download_url(url: str, output_dir: Path) -> Path:
     """Download video from public URL using bundled/discovered yt-dlp."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    video_id = url.split("v=")[-1].split("?")[0].split("&")[0].split("/")[-1]
+
+    # Check if already downloaded
+    matching = [f for f in output_dir.glob("*.mp4") if video_id in f.name and f.stat().st_size > 1000000]
+    if matching:
+        downloaded = sorted(matching, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+        print(f"[yt-dlp] Using already downloaded source video: {downloaded.name}", flush=True)
+        return downloaded
+
     out_template = str(output_dir / "%(title).50s [%(id)s].%(ext)s")
     ytdlp = config.ytdlp_path or "yt-dlp"
 
-    print(f"[yt-dlp] Downloading video from: {url}")
+    print(f"[yt-dlp] Downloading video from: {url}", flush=True)
     cmd = [
         str(ytdlp),
         "--format", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[ext=mp4]/best",
@@ -57,11 +72,16 @@ def download_url(url: str, output_dir: Path) -> Path:
         raise RuntimeError(f"yt-dlp failed to download video with code {proc.returncode}")
 
     # Find the downloaded mp4 file
-    mp4_files = sorted(output_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
-    if not mp4_files:
-        raise FileNotFoundError(f"yt-dlp download completed but no MP4 found in {output_dir}")
+    video_id = url.split("v=")[-1].split("?")[0].split("&")[0].split("/")[-1]
+    matching = [f for f in output_dir.glob("*.mp4") if video_id in f.name]
+    if matching:
+        downloaded = sorted(matching, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+    else:
+        mp4_files = sorted(output_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+        if not mp4_files:
+            raise FileNotFoundError(f"yt-dlp download completed but no MP4 found in {output_dir}")
+        downloaded = mp4_files[0]
 
-    downloaded = mp4_files[0]
     print(f"[yt-dlp] Downloaded successfully: {downloaded.name}")
     return downloaded
 
