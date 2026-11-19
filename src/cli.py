@@ -107,6 +107,8 @@ def process_video(
     watermark_position: str = "top_center",
     creator_handle: Optional[str] = None,
     campaign_tags: Optional[List[str]] = None,
+    upload_youtube: bool = False,
+    youtube_privacy: str = "unlisted",
     target_duration: float = 30.0,
     min_duration: float = 15.0,
     max_duration: float = 60.0
@@ -296,11 +298,31 @@ def process_video(
             meta_file = write_meta_package(social_meta, out_mp4)
             print(f"      Generated social pack: {meta_file.name}")
 
+            # 7. Optional Automatic YouTube Upload
+            youtube_meta = None
+            if upload_youtube:
+                try:
+                    from export.youtube_uploader import get_authenticated_service, upload_video
+                    yt_service = get_authenticated_service()
+                    yt_res = upload_video(
+                        youtube=yt_service,
+                        file_path=out_mp4,
+                        title=social_meta.get("title", clip.get("title")),
+                        description=social_meta.get("description", ""),
+                        tags=social_meta.get("hashtags", []),
+                        privacy_status=youtube_privacy
+                    )
+                    youtube_meta = yt_res
+                    print(f"      [YouTube Uploaded] {yt_res['shortsUrl']}")
+                except Exception as yt_err:
+                    print(f"      [YouTube Upload Warning] Failed to upload {Path(out_mp4).name}: {yt_err}")
+
             rendered_results.append({
                 "clip": clip,
                 "video_path": out_mp4,
                 "meta_path": str(meta_file),
-                "social_metadata": social_meta
+                "social_metadata": social_meta,
+                "youtube": youtube_meta
             })
         else:
             print(f"      Render failed: {render_res.get('error')}")
@@ -333,6 +355,8 @@ def main():
     parser.add_argument("--watermark-position", choices=["top_center", "bottom_center", "center"], default="top_center", help="Watermark placement position (default: top_center)")
     parser.add_argument("--creator-handle", default=None, help="Creator social handle to include as first line in caption (e.g. '@iamlexvalentino')")
     parser.add_argument("--campaign-tags", default=None, help="Comma-separated campaign hashtags (e.g. '#iamlexvalentino,#lexvalentino')")
+    parser.add_argument("--upload-youtube", action="store_true", help="Automatically upload rendered clips to YouTube as Shorts")
+    parser.add_argument("--youtube-privacy", choices=["public", "unlisted", "private"], default="unlisted", help="YouTube upload privacy status (default: unlisted)")
     parser.add_argument("-l", "--layout", choices=["auto", "single", "split", "stacked"], default="auto", help="Video framing layout: auto (podcast split detection), single (centered face), or split/stacked (top-bottom) (default: auto)")
     parser.add_argument("-t", "--task", choices=["translate", "transcribe"], default="translate", help="Whisper task: translate (translates foreign speech to clean English) or transcribe (default: translate)")
     parser.add_argument("--lang", "--language", dest="language", default=None, help="Spoken language code (e.g. 'hi' for Hindi, default: auto-detect)")
@@ -362,7 +386,9 @@ def main():
             watermark_path=args.watermark,
             watermark_position=args.watermark_position,
             creator_handle=args.creator_handle,
-            campaign_tags=[t.strip() for t in args.campaign_tags.split(",")] if args.campaign_tags else None
+            campaign_tags=[t.strip() for t in args.campaign_tags.split(",")] if args.campaign_tags else None,
+            upload_youtube=args.upload_youtube,
+            youtube_privacy=args.youtube_privacy
         )
         print(f"Completed! {len(results)} clips generated.")
     except Exception as e:

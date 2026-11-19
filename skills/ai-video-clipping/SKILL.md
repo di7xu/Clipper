@@ -129,6 +129,18 @@ Use the Antigravity LLM's superior context and YouTube knowledge to curate and c
 python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "podcast.mp4" --clips-json "curated_clips.json" --layout auto --task translate
 ```
 
+### 6. YouTube Automated Uploading
+
+Upload all clips in a folder directly to your YouTube channel as Shorts with companions titles, descriptions, and hashtags:
+
+```powershell
+# Upload entire folder
+python src/export/youtube_uploader.py --folder "output_clips/Lex_Valentino_Campaign" --privacy public
+
+# Or automatically upload during clipping execution:
+python src/cli.py -i "video.mp4" --upload-youtube --youtube-privacy public
+```
+
 ---
 
 ## CLI Options & Flags
@@ -152,6 +164,8 @@ python "c:\MyProject\Mycreate\Clipping\src\cli.py" -i "podcast.mp4" --clips-json
 | | `--watermark-position` | `top_center`, `bottom_center`, `center` | `top_center` | Placement position for brand watermark |
 | | `--creator-handle` | String (e.g. `@iamlexvalentino`) | None | First line creator tag in social description |
 | | `--campaign-tags` | Comma-separated tags | None | Mandatory campaign hashtags (e.g. `#iamlexvalentino,#lexvalentino`) |
+| | `--upload-youtube` | Flag | False | Automatically upload rendered clips directly to YouTube as Shorts |
+| | `--youtube-privacy` | `public`, `unlisted`, `private` | `unlisted` | Upload privacy status on YouTube |
 | | `--no-tighten` | Flag | False | Disable filler word and silence trimming |
 | | `--no-captions`| Flag | False | Disable burned-in animated karaoke subtitles |
 
