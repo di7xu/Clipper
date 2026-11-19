@@ -124,9 +124,10 @@ for idx, clip in enumerate(PHASE_01_CLIPS, 1):
     # Note: subtitles filter path must escape colons and backslashes for FFmpeg
     escaped_ass = str(ass_path.resolve()).replace("\\", "/").replace(":", "\\:")
     
+    # Perfect 1:1 Aspect Ratio (No Stretch) + Clarity & Contrast Enhancements
     filter_graph = (
-        f"[0:v]crop=385:220:0:440,scale=1080:720[top_cam];"
-        f"[0:v]crop=608:1080:656:0,scale=1080:1200[bot_game];"
+        f"[0:v]crop=330:220:25:440,scale=1080:720,unsharp=5:5:0.8:5:5:0.0[top_cam];"
+        f"[0:v]crop=972:1080:550:0,scale=1080:1200,unsharp=5:5:1.0:5:5:0.0,eq=contrast=1.07:brightness=0.01:saturation=1.20[bot_game];"
         f"[top_cam][bot_game]vstack=inputs=2,subtitles='{escaped_ass}'[v_out];"
         f"[0:a]loudnorm=I=-16[a_out]"
     )
