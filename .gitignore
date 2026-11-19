@@ -39,3 +39,8 @@ env/
 venv/
 .idea/
 .vscode/
+
+# OAuth Credentials & API Tokens
+client_secrets*.json
+youtube_token.json
+
