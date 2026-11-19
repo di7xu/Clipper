@@ -184,139 +184,143 @@ def ensure_source_video(source_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Render clips in 20-clip phases.")
-    parser.add_argument("--phase", type=int, default=2, choices=[1, 2, 3, 4, 5], help="Phase number to render (1-5)")
+    parser.add_argument("--phase", type=int, nargs="+", default=[2], help="Phase number(s) to render (e.g. --phase 3 4 5)")
     parser.add_argument("--source", type=str, default=SOURCE_VIDEO_DEFAULT, help="Path to source video")
     args = parser.parse_args()
 
-    phase_num = args.phase
-    clips = ALL_PHASES[phase_num]
-
+    phase_nums = args.phase
     device, vcodec, hw_label = detect_hardware()
-    out_dir = Path(f"output_clips/IShowSpeed_GTA6/Phase_{phase_num:02d}")
-    temp_dir = Path(f"workspace_temp/phase_{phase_num:02d}")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    temp_dir.mkdir(parents=True, exist_ok=True)
-
-    print("=" * 70)
-    print(f"🎬 AI CLIPPING STUDIO: PHASE {phase_num} (Clips {clips[0]['id']} - {clips[-1]['id']})")
-    print(f"🖥️ Hardware Detected: {hw_label}")
-    print(f"📁 Target Output: {out_dir}")
-    print("=" * 70)
-
     source_path = ensure_source_video(args.source)
 
-    # Initialize Whisper
+    # Initialize Whisper once
     compute_type = "float16" if device == "cuda" else "int8"
-    print(f"\n[1/2] Loading Whisper model on {device.upper()} ({compute_type})...")
+    print("=" * 70)
+    print(f"🎬 AI CLIPPING STUDIO: BATCH RENDERING PHASES {phase_nums}")
+    print(f"🖥️ Hardware Detected: {hw_label}")
+    print(f"🧠 Loading Whisper model on {device.upper()} ({compute_type})...")
+    print("=" * 70)
     model = faster_whisper.WhisperModel("base", device=device, compute_type=compute_type, cpu_threads=4)
     style_cfg = replace(PRESET_STYLES["viral_yellow"], margin_v=320, font_size=84, outline_width=5.0)
 
-    manifest = []
-    t_start_all = time.time()
+    for phase_num in phase_nums:
+        clips = ALL_PHASES[phase_num]
+        out_dir = Path(f"output_clips/IShowSpeed_GTA6/Phase_{phase_num:02d}")
+        temp_dir = Path(f"workspace_temp/phase_{phase_num:02d}")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir.mkdir(parents=True, exist_ok=True)
 
-    for idx, clip in enumerate(clips, 1):
-        c_id = clip["id"]
-        title = clip["title"]
-        start_sec = clip["start"]
-        end_sec = clip["end"]
-        duration = end_sec - start_sec
+        print("\n" + "=" * 70)
+        print(f"🚀 STARTING PHASE {phase_num} (Clips {clips[0]['id']} - {clips[-1]['id']})")
+        print(f"📁 Target Output: {out_dir}")
+        print("=" * 70)
 
-        clean_title = "".join(c for c in title if c.isalnum() or c in (" ", "_", "-")).rstrip()
-        out_name = f"Speed_GTA6_Clip_{c_id}_{clean_title.replace(' ', '_')}.mp4"
-        out_video_path = out_dir / out_name
-        thumb_path = out_dir / f"thumb_{c_id}.jpg"
+        manifest = []
+        t_start_phase = time.time()
 
-        print(f"\n[{idx}/20] Clip {c_id}: '{title}' ({start_sec:.1f}s - {end_sec:.1f}s | {duration:.1f}s)")
-        t0 = time.time()
+        for idx, clip in enumerate(clips, 1):
+            c_id = clip["id"]
+            title = clip["title"]
+            start_sec = clip["start"]
+            end_sec = clip["end"]
+            duration = end_sec - start_sec
 
-        if out_video_path.exists() and out_video_path.stat().st_size > 1_000_000 and thumb_path.exists():
-            print(f"   ⏩ Already rendered. Skipping.")
+            clean_title = "".join(c for c in title if c.isalnum() or c in (" ", "_", "-")).rstrip()
+            out_name = f"Speed_GTA6_Clip_{c_id}_{clean_title.replace(' ', '_')}.mp4"
+            out_video_path = out_dir / out_name
+            thumb_path = out_dir / f"thumb_{c_id}.jpg"
+
+            print(f"\n[{idx}/20] Clip {c_id}: '{title}' ({start_sec:.1f}s - {end_sec:.1f}s | {duration:.1f}s)")
+            t0 = time.time()
+
+            if out_video_path.exists() and out_video_path.stat().st_size > 1_000_000 and thumb_path.exists():
+                print(f"   ⏩ Already rendered. Skipping.")
+                manifest.append({
+                    "id": c_id, "title": title, "video_file": str(out_video_path).replace("\\", "/"),
+                    "thumbnail": str(thumb_path).replace("\\", "/"), "start": start_sec, "end": end_sec,
+                    "duration": duration, "score": clip["score"]
+                })
+                continue
+
+            # Extract audio
+            audio_wav = temp_dir / f"clip_{c_id}.wav"
+            subprocess.run([
+                "ffmpeg", "-y", "-nostdin", "-ss", str(start_sec), "-t", str(duration),
+                "-i", source_path, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                str(audio_wav)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+            # Transcribe
+            with wave.open(str(audio_wav), "rb") as wf:
+                audio_data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+
+            segments, _ = model.transcribe(audio_data, language="en", word_timestamps=True)
+            words = []
+            for s in segments:
+                for w in s.words:
+                    w_text = w.word.strip()
+                    if w_text:
+                        words.append({"word": w_text, "start": round(w.start, 2), "end": round(w.end, 2)})
+
+            # Subtitles
+            ass_path = temp_dir / f"subs_{c_id}.ass"
+            ass_content = compile_ass_subtitles(words, style=style_cfg, clip_offset=0.0)
+            with open(ass_path, "w", encoding="utf-8") as f:
+                f.write(ass_content)
+
+            escaped_ass = str(ass_path.resolve()).replace("\\", "/").replace(":", "\\:")
+            # Perfect 1:1 Aspect Ratio (No Stretch) + Clarity & Contrast Enhancements
+            filter_graph = (
+                f"[0:v]crop=330:220:25:440,scale=1080:720,unsharp=5:5:0.8:5:5:0.0[top_cam];"
+                f"[0:v]crop=972:1080:550:0,scale=1080:1200,unsharp=5:5:1.0:5:5:0.0,eq=contrast=1.07:brightness=0.01:saturation=1.20[bot_game];"
+                f"[top_cam][bot_game]vstack=inputs=2,subtitles='{escaped_ass}'[v_out];"
+                f"[0:a]loudnorm=I=-16[a_out]"
+            )
+
+            cmd_render = [
+                "ffmpeg", "-y", "-nostdin",
+                "-ss", str(start_sec), "-t", str(duration),
+                "-i", source_path,
+                "-filter_complex", filter_graph,
+                "-map", "[v_out]", "-map", "[a_out]",
+                "-c:v", vcodec, "-b:v", "6200k",
+                "-c:a", "aac", "-b:a", "192k",
+                str(out_video_path)
+            ]
+
+            res = subprocess.run(cmd_render, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            if res.returncode != 0:
+                cmd_render[cmd_render.index(vcodec)] = "libx264"
+                cmd_render[cmd_render.index("-b:v")] = "-preset"
+                cmd_render[cmd_render.index("6200k")] = "veryfast"
+                subprocess.run(cmd_render, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+            # Thumbnail
+            subprocess.run([
+                "ffmpeg", "-y", "-nostdin", "-ss", "3.0", "-i", str(out_video_path),
+                "-frames:v", "1", "-q:v", "2", str(thumb_path)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            elapsed = time.time() - t0
+            fsize = out_video_path.stat().st_size / (1024*1024) if out_video_path.exists() else 0
+            print(f"   ✅ Done in {elapsed:.1f}s | Size: {fsize:.1f} MB | Words: {len(words)}")
+
             manifest.append({
                 "id": c_id, "title": title, "video_file": str(out_video_path).replace("\\", "/"),
                 "thumbnail": str(thumb_path).replace("\\", "/"), "start": start_sec, "end": end_sec,
                 "duration": duration, "score": clip["score"]
             })
-            continue
 
-        # Extract audio
-        audio_wav = temp_dir / f"clip_{c_id}.wav"
-        subprocess.run([
-            "ffmpeg", "-y", "-nostdin", "-ss", str(start_sec), "-t", str(duration),
-            "-i", source_path, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-            str(audio_wav)
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        # Save manifest
+        manifest_path = out_dir / f"phase_{phase_num:02d}_manifest.json"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
 
-        # Transcribe
-        with wave.open(str(audio_wav), "rb") as wf:
-            audio_data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+        total_time = time.time() - t_start_phase
+        print("\n" + "=" * 70)
+        print(f"🎉 PHASE {phase_num} COMPLETED! 20/20 CLIPS IN {total_time/60:.1f} MIN")
+        print(f"📁 Manifest: {manifest_path}")
+        print("=" * 70)
 
-        segments, _ = model.transcribe(audio_data, language="en", word_timestamps=True)
-        words = []
-        for s in segments:
-            for w in s.words:
-                w_text = w.word.strip()
-                if w_text:
-                    words.append({"word": w_text, "start": round(w.start, 2), "end": round(w.end, 2)})
-
-        # Subtitles
-        ass_path = temp_dir / f"subs_{c_id}.ass"
-        ass_content = compile_ass_subtitles(words, style=style_cfg, clip_offset=0.0)
-        with open(ass_path, "w", encoding="utf-8") as f:
-            f.write(ass_content)
-
-        escaped_ass = str(ass_path.resolve()).replace("\\", "/").replace(":", "\\:")
-        # Perfect 1:1 Aspect Ratio (No Stretch) + Clarity & Contrast Enhancements
-        filter_graph = (
-            f"[0:v]crop=330:220:25:440,scale=1080:720,unsharp=5:5:0.8:5:5:0.0[top_cam];"
-            f"[0:v]crop=972:1080:550:0,scale=1080:1200,unsharp=5:5:1.0:5:5:0.0,eq=contrast=1.07:brightness=0.01:saturation=1.20[bot_game];"
-            f"[top_cam][bot_game]vstack=inputs=2,subtitles='{escaped_ass}'[v_out];"
-            f"[0:a]loudnorm=I=-16[a_out]"
-        )
-
-        cmd_render = [
-            "ffmpeg", "-y", "-nostdin",
-            "-ss", str(start_sec), "-t", str(duration),
-            "-i", source_path,
-            "-filter_complex", filter_graph,
-            "-map", "[v_out]", "-map", "[a_out]",
-            "-c:v", vcodec, "-b:v", "6200k",
-            "-c:a", "aac", "-b:a", "192k",
-            str(out_video_path)
-        ]
-
-        res = subprocess.run(cmd_render, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        if res.returncode != 0:
-            cmd_render[cmd_render.index(vcodec)] = "libx264"
-            cmd_render[cmd_render.index("-b:v")] = "-preset"
-            cmd_render[cmd_render.index("6200k")] = "veryfast"
-            subprocess.run(cmd_render, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-
-        # Thumbnail
-        subprocess.run([
-            "ffmpeg", "-y", "-nostdin", "-ss", "3.0", "-i", str(out_video_path),
-            "-frames:v", "1", "-q:v", "2", str(thumb_path)
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        elapsed = time.time() - t0
-        fsize = out_video_path.stat().st_size / (1024*1024) if out_video_path.exists() else 0
-        print(f"   ✅ Done in {elapsed:.1f}s | Size: {fsize:.1f} MB | Words: {len(words)}")
-
-        manifest.append({
-            "id": c_id, "title": title, "video_file": str(out_video_path).replace("\\", "/"),
-            "thumbnail": str(thumb_path).replace("\\", "/"), "start": start_sec, "end": end_sec,
-            "duration": duration, "score": clip["score"]
-        })
-
-    # Save manifest
-    manifest_path = out_dir / f"phase_{phase_num:02d}_manifest.json"
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
-
-    total_time = time.time() - t_start_all
-    print("\n" + "=" * 70)
-    print(f"🎉 PHASE {phase_num} COMPLETED! 20/20 CLIPS IN {total_time/60:.1f} MIN")
-    print(f"📁 Manifest: {manifest_path}")
-    print("=" * 70)
 
 if __name__ == "__main__":
     main()
