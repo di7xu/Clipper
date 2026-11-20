@@ -43,4 +43,11 @@ venv/
 # OAuth Credentials & API Tokens
 client_secrets*.json
 youtube_token.json
+meta_credentials*.json
+meta_token*.json
+youtube_automation/tokens/*.json
+!youtube_automation/tokens/.gitkeep
+youtube_automation/client_secrets*.json
+
+
 

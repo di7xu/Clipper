@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "client_secrets_file": "client_secrets.json",
+  "default_scopes": [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly"
+  ],
+  "channels": [
+    {
+      "alias": "channel_01",
+      "display_name": "Channel 01 (Primary)",
+      "niche": "Crazy Crashes & High-Speed Car Chases",
+      "token_file": "tokens/ch01_default_token.json",
+      "status": "connected",
+      "daily_upload_limit": 6,
+      "daily_uploads_today": 0
+    },
+    {
+      "alias": "ch01_default",
+      "display_name": "Ch01 Default",
+      "niche": "General Clips",
+      "token_file": "tokens/ch01_default_token.json",
+      "status": "connected",
+      "daily_upload_limit": 6,
+      "daily_uploads_today": 0
+    }
+  ]
+}
